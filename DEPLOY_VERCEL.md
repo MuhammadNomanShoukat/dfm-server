@@ -1,19 +1,16 @@
 # Deploy HerdOS API (server) to Vercel
 
-This folder is the **API only**. Deploy it as its own Vercel project (or from a separate GitHub repo).
+## Files required
 
-## Files required for Vercel
-
-- `api/index.ts` — serverless entry
-- `vercel.json` — route rewrite
-- `src/` — Express app
+- `api/index.ts`
+- `vercel.json`
+- `src/`
 - `package.json`
 - `tsconfig.json`
-- `db/migrations/` — for local/Neon setup only (not used by Vercel runtime)
 
-## Never upload
+## Never commit
 
-- `.env` (secrets)
+- `.env`
 - `node_modules/`
 - `dist/`
 
@@ -21,29 +18,33 @@ This folder is the **API only**. Deploy it as its own Vercel project (or from a 
 
 | Setting | Value |
 |---------|--------|
-| Root Directory | `.` (repo root if this folder IS the repo) |
-| Framework | Other |
-| Build Command | *(leave empty)* |
-| Output Directory | *(leave empty)* |
+| Root Directory | `.` (repo root) |
+| Framework Preset | **Other** |
+| Build Command | `npm run vercel-build` |
+| Output Directory | **leave EMPTY** (clear `public` if set) |
 | Install Command | `npm install` |
 
-## Environment variables (Production)
+### Fix: "No Output Directory named public"
 
-| Name | Example |
-|------|---------|
+1. Project → **Settings** → **General** → **Build & Development Settings**
+2. Override **Output Directory** → clear it (do not use `public`)
+3. Override **Build Command** → `npm run vercel-build`
+4. Framework Preset → **Other**
+5. Redeploy
+
+## Environment variables
+
+| Name | Value |
+|------|--------|
 | `NODE_ENV` | `production` |
-| `DATABASE_URL` | Neon URL for `dairy_farm` (`sslmode=require`, prefer **pooler**) |
+| `DATABASE_URL` | Neon URL (`sslmode=require`, prefer pooler) |
 | `JWT_SECRET` | 16+ random characters |
-| `CLIENT_ORIGIN` | `https://your-ui.vercel.app` (set after UI deploy) |
+| `CLIENT_ORIGIN` | UI URL (after UI deploy) |
 | `HOST` | `0.0.0.0` |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` |
 | `OLLAMA_MODEL` | `llama3` |
 | `COOKIE_NAME` | `herdos_token` |
 
-## After deploy
+## Test
 
-Open: `https://YOUR-API.vercel.app/api/health`
-
-Expect: `{ "ok": true, "name": "HerdOS", ... }`
-
-Then put that API URL into the **client** as `VITE_API_URL` (no `/api`, no trailing slash).
+`https://YOUR-API.vercel.app/api/health` → `{ "ok": true, ... }`
