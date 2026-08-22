@@ -20,7 +20,7 @@ function databaseUrlHost(url: string): string | null {
   }
 }
 
-async function applySchemaAndSeed(client: pg.Client): Promise<void> {
+async function applyMigrations(client: pg.Client): Promise<void> {
   const migrated = await client.query(`SELECT to_regclass('public.tenants') AS t`);
   if (!migrated.rows[0]?.t) {
     const sqlPath = path.join(root, '../db/migrations/001_init.sql');
@@ -28,8 +28,22 @@ async function applySchemaAndSeed(client: pg.Client): Promise<void> {
     await client.query(sql);
     process.stdout.write('Applied 001_init.sql\n');
   } else {
-    process.stdout.write('Schema already present\n');
+    process.stdout.write('Schema 001 already present\n');
   }
+
+  const enhanced = await client.query(`SELECT to_regclass('public.permissions') AS t`);
+  if (!enhanced.rows[0]?.t) {
+    const sqlPath = path.join(root, '../db/migrations/002_enhancements.sql');
+    const sql = fs.readFileSync(sqlPath, 'utf8');
+    await client.query(sql);
+    process.stdout.write('Applied 002_enhancements.sql\n');
+  } else {
+    process.stdout.write('Schema 002 already present\n');
+  }
+}
+
+async function applySchemaAndSeed(client: pg.Client): Promise<void> {
+  await applyMigrations(client);
   await seed(client);
 }
 

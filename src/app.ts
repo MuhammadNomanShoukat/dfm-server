@@ -21,6 +21,9 @@ import { collectionRouter } from './modules/collection/collection.routes.js';
 import { reportsRouter } from './modules/reports/reports.routes.js';
 import { aiRouter } from './modules/ai/ai.routes.js';
 import { notificationsRouter } from './modules/notifications/notifications.routes.js';
+import { permissionsRouter } from './modules/permissions/permissions.routes.js';
+import { subscriptionRouter } from './modules/subscription/subscription.routes.js';
+import { syncRouter } from './modules/sync/sync.routes.js';
 import { adminRouter } from './modules/admin/admin.routes.js';
 
 export function createApp() {
@@ -60,6 +63,23 @@ export function createApp() {
     legacyHeaders: false,
   });
 
+  app.get('/', (_req, res) => {
+    res.json({
+      ok: true,
+      name: 'HerdOS API',
+      message: 'Server is running. Use /api/health or the React client.',
+      health: '/api/health',
+    });
+  });
+
+  app.get('/api', (_req, res) => {
+    res.json({
+      ok: true,
+      name: 'HerdOS API',
+      health: '/api/health',
+    });
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, name: 'HerdOS', time: new Date().toISOString() });
   });
@@ -80,6 +100,9 @@ export function createApp() {
   app.use('/api/reports', reportsRouter);
   app.use('/api/ai', aiLimiter, aiRouter);
   app.use('/api/notifications', notificationsRouter);
+  app.use('/api/permissions', permissionsRouter);
+  app.use('/api/subscription', subscriptionRouter);
+  app.use('/api/sync', syncRouter);
   app.use('/api/admin', adminRouter);
 
   app.use(errorHandler);

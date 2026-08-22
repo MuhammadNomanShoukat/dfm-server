@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { roleHasPermission } from '../modules/permissions/permissions.service.js';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { query } from '../db/pool.js';
@@ -160,6 +161,26 @@ export function requireFarmId(req: Request): string {
     throw new HttpError(400, 'FARM_REQUIRED', 'Select a farm first.');
   }
   return auth.farmId;
+}
+
+export function requirePermission(module: string, action: string) {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const role = req.auth?.farmRole ?? req.auth?.globalRole;
+      if (!role) {
+        next(new HttpError(401, 'UNAUTHENTICATED', 'Please sign in.'));
+        return;
+      }
+      const allowed = await roleHasPermission(role, module, action);
+      if (!allowed) {
+        next(new HttpError(403, 'FORBIDDEN', 'You do not have permission for this action.'));
+        return;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export function verifyMfaToken(token: string): string {

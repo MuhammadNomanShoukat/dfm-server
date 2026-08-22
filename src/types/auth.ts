@@ -4,7 +4,8 @@ export type Role =
   | 'farm_manager'
   | 'veterinarian'
   | 'milk_operator'
-  | 'worker';
+  | 'worker'
+  | 'accountant';
 
 export type AuthContext = {
   userId: string;

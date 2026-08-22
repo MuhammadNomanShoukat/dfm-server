@@ -5,6 +5,7 @@ export const ROLES = [
   'veterinarian',
   'milk_operator',
   'worker',
+  'accountant',
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -16,6 +17,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   veterinarian: 'Veterinarian',
   milk_operator: 'Milk Collection Operator',
   worker: 'Worker',
+  accountant: 'Accountant',
 };
 
 const WRITE_ROLES: Role[] = ['super_admin', 'farm_owner', 'farm_manager'];
@@ -28,7 +30,7 @@ export const ACCESS: Record<string, Role[]> = {
   health_write: ['super_admin', 'farm_owner', 'farm_manager', 'veterinarian'],
   feed_write: [...WRITE_ROLES],
   finance_write: ['super_admin', 'farm_owner'],
-  finance_read: ['super_admin', 'farm_owner', 'farm_manager'],
+  finance_read: ['super_admin', 'farm_owner', 'farm_manager', 'accountant'],
   employees_write: ['super_admin', 'farm_owner'],
   tasks_write: [...WRITE_ROLES],
   tasks_work: ['super_admin', 'farm_owner', 'farm_manager', 'worker', 'veterinarian', 'milk_operator'],

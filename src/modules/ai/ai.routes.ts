@@ -4,6 +4,8 @@ import { query } from '../../db/pool.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { requireAuth, requireFarm, requireFarmId } from '../../middleware/auth.js';
 import { ollamaChat } from './ollama.js';
+import { generateReport, type ReportType } from './reports.service.js';
+import { requirePlanFeature } from '../subscription/subscription.service.js';
 
 export const aiRouter = Router();
 aiRouter.use(requireAuth, requireFarm);
@@ -20,6 +22,32 @@ aiRouter.get(
 const askSchema = z.object({
   question: z.string().min(3).max(800),
 });
+
+const REPORT_TYPES = ['health', 'feeding', 'financial', 'breeding', 'performance'] as const;
+
+aiRouter.get(
+  '/reports/:type',
+  requirePlanFeature('aiReports'),
+  asyncHandler(async (req, res) => {
+    const farmId = requireFarmId(req);
+    const type = req.params.type as ReportType;
+    if (!REPORT_TYPES.includes(type)) {
+      res.status(400).json({ error: { code: 'INVALID_REPORT', message: 'Unknown report type.' } });
+      return;
+    }
+    const report = await generateReport(farmId, type);
+    res.json({ report });
+  }),
+);
+
+aiRouter.get(
+  '/reports',
+  asyncHandler(async (_req, res) => {
+    res.json({
+      types: REPORT_TYPES.map((t) => ({ id: t, label: t.charAt(0).toUpperCase() + t.slice(1) })),
+    });
+  }),
+);
 
 aiRouter.post(
   '/ask',

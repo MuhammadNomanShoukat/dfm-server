@@ -5,6 +5,7 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { writeAudit } from '../../middleware/audit.js';
 import { requireAccess, requireAuth, requireFarm, requireFarmId } from '../../middleware/auth.js';
 import { HttpError } from '../../utils/httpError.js';
+import { checkAnimalLimit } from '../subscription/subscription.service.js';
 
 export const animalsRouter = Router();
 animalsRouter.use(requireAuth, requireFarm);
@@ -18,6 +19,7 @@ const animalSchema = z.object({
   gender: z.enum(['female', 'male']),
   birthDate: z.string().optional().nullable(),
   weightKg: z.number().positive().optional().nullable(),
+  targetWeightKg: z.number().positive().optional().nullable(),
   color: z.string().max(60).optional().nullable(),
   status: z.enum(['calf', 'heifer', 'bull', 'lactating', 'dry', 'pregnant', 'sick', 'sold', 'dead']),
   barnId: z.string().uuid().optional().nullable(),
@@ -32,7 +34,13 @@ animalsRouter.get(
   asyncHandler(async (req, res) => {
     const farmId = requireFarmId(req);
     const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const species = typeof req.query.species === 'string' ? req.query.species : null;
+    const breed = typeof req.query.breed === 'string' ? req.query.breed : null;
+    const gender = typeof req.query.gender === 'string' ? req.query.gender : null;
+    const pregnancy = req.query.pregnancy === 'true';
+    const lowWeight = req.query.filter === 'low_weight';
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const sort = typeof req.query.sort === 'string' ? req.query.sort : 'animal_code';
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
     const offset = (page - 1) * pageSize;
@@ -43,6 +51,24 @@ animalsRouter.get(
       params.push(status);
       filters.push(`a.status = $${params.length}`);
     }
+    if (species) {
+      params.push(species);
+      filters.push(`a.species = $${params.length}`);
+    }
+    if (breed) {
+      params.push(breed);
+      filters.push(`a.breed = $${params.length}`);
+    }
+    if (gender) {
+      params.push(gender);
+      filters.push(`a.gender = $${params.length}`);
+    }
+    if (pregnancy) {
+      filters.push(`a.status = 'pregnant'`);
+    }
+    if (lowWeight) {
+      filters.push(`a.target_weight_kg IS NOT NULL AND a.weight_kg IS NOT NULL AND a.weight_kg < a.target_weight_kg`);
+    }
     if (search) {
       params.push(`%${search}%`);
       filters.push(
@@ -50,19 +76,102 @@ animalsRouter.get(
       );
     }
     const where = filters.join(' AND ');
+    const orderCol = ['animal_code', 'name', 'weight_kg', 'status', 'birth_date'].includes(sort) ? sort : 'animal_code';
     const count = await query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM animals a WHERE ${where}`, params);
     params.push(pageSize, offset);
     const items = await query(
-      `SELECT a.*, b.name AS barn_name, s.code AS stall_code
+      `SELECT a.*, b.name AS barn_name, s.code AS stall_code,
+              CASE WHEN a.birth_date IS NOT NULL
+                THEN EXTRACT(YEAR FROM age(CURRENT_DATE, a.birth_date))::int ELSE NULL END AS age_years
        FROM animals a
        LEFT JOIN barns b ON b.id = a.barn_id
        LEFT JOIN stalls s ON s.id = a.stall_id
        WHERE ${where}
-       ORDER BY a.animal_code
+       ORDER BY a.${orderCol}
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
     res.json({ items: items.rows, total: Number(count.rows[0].count), page, pageSize });
+  }),
+);
+
+animalsRouter.get(
+  '/:id/profile',
+  requireAccess('animals_read'),
+  asyncHandler(async (req, res) => {
+    const farmId = requireFarmId(req);
+    const animal = await getAnimal(farmId, req.params.id);
+    const [timeline, health, vaccinations, breeding, milk, feed, finance, weights] = await Promise.all([
+      query(`SELECT * FROM animal_events WHERE farm_id = $1 AND animal_id = $2 ORDER BY event_at DESC LIMIT 50`, [
+        farmId,
+        req.params.id,
+      ]),
+      query(`SELECT * FROM health_records WHERE farm_id = $1 AND animal_id = $2 ORDER BY recorded_at DESC LIMIT 30`, [
+        farmId,
+        req.params.id,
+      ]),
+      query(`SELECT * FROM vaccinations WHERE farm_id = $1 AND animal_id = $2 ORDER BY given_on DESC`, [
+        farmId,
+        req.params.id,
+      ]),
+      query(`SELECT * FROM breeding_records WHERE farm_id = $1 AND animal_id = $2 ORDER BY event_at DESC`, [
+        farmId,
+        req.params.id,
+      ]),
+      query(
+        `SELECT * FROM milk_records WHERE farm_id = $1 AND animal_id = $2 ORDER BY recorded_at DESC LIMIT 30`,
+        [farmId, req.params.id],
+      ),
+      query(
+        `SELECT fc.*, ft.name AS feed_name FROM feed_consumptions fc
+         JOIN feed_types ft ON ft.id = fc.feed_type_id
+         WHERE fc.farm_id = $1 AND fc.animal_id = $2 ORDER BY fc.consumed_at DESC LIMIT 20`,
+        [farmId, req.params.id],
+      ),
+      query(
+        `SELECT * FROM finance_entries WHERE farm_id = $1 AND description ILIKE $2 ORDER BY entry_date DESC LIMIT 10`,
+        [farmId, `%${animal.animal_code}%`],
+      ),
+      query(
+        `SELECT * FROM animal_weight_records WHERE farm_id = $1 AND animal_id = $2 ORDER BY recorded_at DESC LIMIT 30`,
+        [farmId, req.params.id],
+      ),
+    ]);
+    res.json({
+      animal,
+      timeline: timeline.rows,
+      health: health.rows,
+      vaccinations: vaccinations.rows,
+      breeding: breeding.rows,
+      production: milk.rows,
+      feeding: feed.rows,
+      finance: finance.rows,
+      weightHistory: weights.rows,
+    });
+  }),
+);
+
+animalsRouter.post(
+  '/:id/weight',
+  requireAccess('animals_write'),
+  asyncHandler(async (req, res) => {
+    const farmId = requireFarmId(req);
+    const body = z
+      .object({ weightKg: z.number().positive(), notes: z.string().max(300).optional() })
+      .parse(req.body);
+    await getAnimal(farmId, req.params.id);
+    const inserted = await query(
+      `INSERT INTO animal_weight_records (farm_id, animal_id, weight_kg, notes, created_by)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [farmId, req.params.id, body.weightKg, body.notes ?? null, req.auth?.userId],
+    );
+    await query(`UPDATE animals SET weight_kg = $3, updated_at = now() WHERE id = $1 AND farm_id = $2`, [
+      req.params.id,
+      farmId,
+      body.weightKg,
+    ]);
+    await addEvent(farmId, req.params.id, 'weight', `Weight updated — ${body.weightKg}kg`, req.auth?.userId ?? null, body);
+    res.status(201).json({ item: inserted.rows[0] });
   }),
 );
 
@@ -86,12 +195,13 @@ animalsRouter.post(
   asyncHandler(async (req, res) => {
     const farmId = requireFarmId(req);
     const body = animalSchema.parse(req.body);
+    await checkAnimalLimit(req.auth?.tenantId ?? null, farmId);
     const qr = `HERD:${farmId.slice(0, 8)}:${body.animalCode.toUpperCase()}`;
     const inserted = await query(
       `INSERT INTO animals (
          farm_id, animal_code, rfid_tag, qr_code, name, breed, species, gender,
-         birth_date, weight_kg, color, status, barn_id, stall_id, sire_id, dam_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         birth_date, weight_kg, target_weight_kg, color, status, barn_id, stall_id, sire_id, dam_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING *`,
       [
         farmId,
@@ -104,6 +214,7 @@ animalsRouter.post(
         body.gender,
         body.birthDate || null,
         body.weightKg ?? null,
+        body.targetWeightKg ?? null,
         body.color || null,
         body.status,
         body.barnId || null,
@@ -136,10 +247,11 @@ animalsRouter.patch(
          gender = COALESCE($8, gender),
          birth_date = COALESCE($9, birth_date),
          weight_kg = COALESCE($10, weight_kg),
-         color = COALESCE($11, color),
-         status = COALESCE($12, status),
-         barn_id = COALESCE($13, barn_id),
-         stall_id = COALESCE($14, stall_id),
+         target_weight_kg = COALESCE($11, target_weight_kg),
+         color = COALESCE($12, color),
+         status = COALESCE($13, status),
+         barn_id = COALESCE($14, barn_id),
+         stall_id = COALESCE($15, stall_id),
          updated_at = now()
        WHERE id = $1 AND farm_id = $2 AND deleted_at IS NULL
        RETURNING *`,
@@ -154,6 +266,7 @@ animalsRouter.patch(
         body.gender ?? null,
         body.birthDate ?? null,
         body.weightKg ?? null,
+        body.targetWeightKg ?? null,
         body.color ?? null,
         body.status ?? null,
         body.barnId ?? null,
